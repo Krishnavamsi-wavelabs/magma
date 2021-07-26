@@ -688,6 +688,16 @@ inline void amf_ctx_clear_auth_vectors(amf_context_t* const ctxt) {
   ctxt->_security.vector_index = AMF_SECURITY_VECTOR_INDEX_INVALID;
 }
 
+int amf_auth_auth_rej(amf_ue_ngap_id_t ue_id) {
+  int rc = RETURNerror;
+  amf_sap_t amf_sap;
+  amf_sap.primitive                    = AMFAS_SECURITY_REJ;
+  amf_sap.u.amf_as.u.security.ue_id    = ue_id;
+  amf_sap.u.amf_as.u.security.msg_type = AMF_AS_MSG_TYPE_AUTH;
+  rc                                   = amf_sap_send(&amf_sap);
+  return rc;
+}
+
 /****************************************************************************
  **                                                                        **
  ** Name:    amf_proc_authentication_failure()                             **
@@ -729,6 +739,11 @@ int amf_proc_authentication_failure(
   if (!ue_mm_context) {
     OAILOG_WARNING(
         LOG_NAS_AMF,
+        "Sending Auth Reject as UE is not authorized due to illegal UE "
+        "ue_mm_context not found\n");
+    rc = amf_auth_auth_rej(ue_id);
+    OAILOG_WARNING(
+        LOG_NAS_AMF,
         "AMF-PROC - Failed to authenticate the UE due to NULL"
         "ue_mm_context\n");
     OAILOG_FUNC_RETURN(LOG_NAS_AMF, rc);
@@ -764,7 +779,15 @@ int amf_proc_authentication_failure(
       amf_ctx->_security.eksi = auth_proc->ksi;
 
       OAILOG_INFO(LOG_NAS_AMF, "Updated EKSI %d\n", amf_ctx->_security.eksi);
-      amf_start_registration_proc_authentication(amf_ctx, registration_proc);
+      rc = amf_start_registration_proc_authentication(
+          amf_ctx, registration_proc);
+      if (rc == RETURNerror) {
+        OAILOG_ERROR(
+            LOG_NAS_AMF,
+            "Sending authentication reject with cause "
+            "AMF_CAUSE_NGKSI_ALREADY_INUSE\n");
+        rc = amf_auth_auth_rej(ue_id);
+      }
       break;
     }
     case AMF_CAUSE_MAC_FAILURE: {
@@ -790,17 +813,21 @@ int amf_proc_authentication_failure(
         /*
          * Notify AMF that the authentication procedure successfully completed
          */
-        amf_sap_t amf_sap;
-        amf_sap.primitive                    = AMFAS_SECURITY_REJ;
-        amf_sap.u.amf_as.u.security.ue_id    = ue_id;
-        amf_sap.u.amf_as.u.security.msg_type = AMF_AS_MSG_TYPE_AUTH;
-        rc                                   = amf_sap_send(&amf_sap);
+        OAILOG_ERROR(
+            LOG_NAS_AMF,
+            "Sending authentication reject with cause AMF_CAUSE_MAC_FAILURE\n");
+        rc = amf_auth_auth_rej(ue_id);
       }
     } break;
     case AMF_CAUSE_SYNCH_FAILURE: {
       struct tagbstring resync_param;
       resync_param.data = (unsigned char*) calloc(1, RESYNC_PARAM_LENGTH);
       if (resync_param.data == NULL) {
+        OAILOG_ERROR(
+            LOG_NAS_AMF,
+            "Sending authentication reject with cause "
+            "AMF_CAUSE_SYNCH_FAILURE\n");
+        rc = amf_auth_auth_rej(ue_id);
         OAILOG_FUNC_RETURN(LOG_NAS_EMM, rc);
       }
 
@@ -820,6 +847,7 @@ int amf_proc_authentication_failure(
       amf_ctx_clear_auth_vectors(amf_ctx);
 
     } break;
+
     default: {
       OAILOG_INFO(LOG_NAS_AMF, "Unsupported 5gmm cause\n");
       break;
